@@ -1,14 +1,15 @@
-package org.spring.springboot.dao;
+package com.opay.org.spring.springboot.dao;
 
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Param;
-import org.spring.springboot.domain.City;
+import com.opay.org.spring.springboot.domain.City;
 
 /**
  * 城市 DAO 接口类
  *
  * Created by bysocket on 07/02/2017.
  */
-public interface CityDao {
+public interface CityDao extends BaseMapper<CityDao> {
 
     /**
      * 根据城市名称，查询城市信息

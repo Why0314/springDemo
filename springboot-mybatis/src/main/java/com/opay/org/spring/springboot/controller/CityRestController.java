@@ -1,9 +1,8 @@
-package org.spring.springboot.controller;
+package com.opay.org.spring.springboot.controller;
 
-import org.spring.springboot.domain.City;
-import org.spring.springboot.service.CityService;
+import com.opay.org.spring.springboot.domain.City;
+import com.opay.org.spring.springboot.service.CityService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;

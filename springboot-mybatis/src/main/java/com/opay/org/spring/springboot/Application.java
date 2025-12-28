@@ -1,9 +1,6 @@
-package org.spring.springboot;
+package com.opay.org.spring.springboot;
 
 import org.mybatis.spring.annotation.MapperScan;
-import org.spring.springboot.dao.CityDao;
-import org.spring.springboot.domain.City;
-import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -13,9 +10,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * Created by bysocket on 16/4/26.
  */
 // Spring Boot 应用的标识
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.opay")
 // mapper 接口类扫描包配置
-@MapperScan("org.spring.springboot.dao")
+//@MapperScan("org.spring.springboot.dao")
 public class Application {
 
     public static void main(String[] args) {

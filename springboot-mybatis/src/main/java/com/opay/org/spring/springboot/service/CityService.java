@@ -1,6 +1,6 @@
-package org.spring.springboot.service;
+package com.opay.org.spring.springboot.service;
 
-import org.spring.springboot.domain.City;
+import com.opay.org.spring.springboot.domain.City;
 
 /**
  * 城市业务逻辑接口类

@@ -1,8 +1,8 @@
-package org.spring.springboot.service.impl;
+package com.opay.org.spring.springboot.service.impl;
 
-import org.spring.springboot.dao.CityDao;
-import org.spring.springboot.domain.City;
-import org.spring.springboot.service.CityService;
+import com.opay.org.spring.springboot.dao.CityDao;
+import com.opay.org.spring.springboot.domain.City;
+import com.opay.org.spring.springboot.service.CityService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
