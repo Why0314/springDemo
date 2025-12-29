@@ -1,4 +1,4 @@
-package com.opay.org.spring.springboot.domain;
+package com.opay.org.spring.springboot.entity;
 
 import com.opay.offline.component.monitor.annotation.EnableMybatisInterceptorEntity;
 import lombok.Data;
@@ -11,7 +11,6 @@ import org.apache.ibatis.mapping.SqlCommandType;
  * Created by bysocket on 07/02/2017.
  */
 @Data
-@Accessors(chain = true)
 @EnableMybatisInterceptorEntity(sqlCommandType = {SqlCommandType.UPDATE, SqlCommandType.INSERT, SqlCommandType.SELECT, SqlCommandType.DELETE})
 public class City {
 
