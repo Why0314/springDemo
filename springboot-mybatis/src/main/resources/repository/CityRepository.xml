@@ -19,7 +19,7 @@
 		where city_name = #{cityName}
 	</select>
     
-    <select id="findListByName" resultMap="java.util.List" parameterType="java.lang.String">
+    <select id="findListByName" resultMap="BaseResultMap" parameterType="java.lang.String">
         select
         <include refid="Base_Column_List" />
         from city
@@ -28,7 +28,7 @@
     
     <insert id="addCity" parameterType="com.opay.org.spring.springboot.entity.City" useGeneratedKeys="true" keyProperty="id">
         insert into city (province_id, city_name, description)
-        values (#{provinceId}, #{cityName}, #{description})
+        values (#{city.provinceId}, #{city.cityName}, #{city.description})
     </insert>
     
     <insert id="addCityBatch" parameterType="java.util.List">
@@ -40,20 +40,20 @@
 
     <update id="updateById" parameterType="com.opay.org.spring.springboot.entity.City">
         update city
-        set province_id = #{provinceId},
-            city_name   = #{cityName},
-            description = #{description}
-        where id = #{id}
+        set province_id = #{city.provinceId},
+            city_name   = #{city.cityName},
+            description = #{city.description}
+        where id = #{city.id}
     </update>
     
     <update id="updateByName" parameterType="com.opay.org.spring.springboot.entity.City">
         update city
-        set province_id = #{provinceId}
-            description = #{description}
-        where city_name = #{cityName}
+        set province_id = #{city.provinceId},
+            description = #{city.description}
+        where city_name = #{city.cityName}
     </update>
     
-    <delete id="deleteById" parameterType="java.lang.Long">
+    <delete id="deleteById" parameterType="java.lang.Integer">
         delete from city where id = #{id}
     </delete>
     

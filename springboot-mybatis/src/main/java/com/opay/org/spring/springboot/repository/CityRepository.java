@@ -24,7 +24,7 @@ public interface CityRepository extends BaseMapper<City> {
 
     int addCity(@Param("city")City city);
 
-    int addCityBatch(@Param("cityList") List<City> cityList);
+    int addCityBatch(@Param("list") List<City> cityList);
 
     int updateById(@Param("city")City city);
 
