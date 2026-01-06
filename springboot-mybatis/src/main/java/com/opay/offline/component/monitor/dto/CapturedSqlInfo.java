@@ -8,17 +8,27 @@ import java.util.LinkedHashMap;
 
 @Data
 public class CapturedSqlInfo {
-    private String entityClassName;       // 实体类名
-    private String tableName;       // 数据库表名
-    private String mapperMethod;          // Mapper 方法
-    private String rawSql;                // 原始 SQL
+    // 实体类名
+    private String entityClassName;
+    // 数据库表名
+    private String tableName;
+    // Mapper 方法
+    private String mapperMethod;
+    // 原始 SQL
+    private String rawSql;
     private SqlCommandType sqlCommandType;
-    private LinkedHashMap<String, Object> params;      // 全部参数
-    private LinkedHashMap<String, Object> whereParams; // 条件参数
-    private String executableSql;         // 可执行 SQL
-    private Object result;                // 执行结果
-    private boolean success;              // SQL 是否成功
+    // 全部参数
+    private LinkedHashMap<String, Object> params;
+    // where后面的条件参数
+    private LinkedHashMap<String, Object> whereParams;
+    // 可执行 SQL
+    private String executableSql;
+    // 执行结果
+    private Object result;
+    // SQL 是否成功
+    private boolean success;
     private LocalDateTime timestamp = LocalDateTime.now();
-    private long durationMillis; // SQL 执行耗时（大致）
+    // SQL 执行耗时
+    private long durationMillis;
 
 }

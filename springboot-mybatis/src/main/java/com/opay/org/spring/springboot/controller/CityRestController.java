@@ -95,6 +95,7 @@ public class CityRestController {
 
     @RequestMapping(value = "/api2/updateByName", method = RequestMethod.POST)
     boolean updateByName2(@RequestBody City city) {
+        //这不对
         LambdaUpdateWrapper<City> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(City::getCityName, city.getCityName());
         updateWrapper.set(StringUtils.isNotEmpty(city.getDescription()), City::getDescription, city.getDescription());
