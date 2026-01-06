@@ -15,234 +15,174 @@ import org.apache.ibatis.type.TypeHandlerRegistry;
 
 import java.lang.reflect.Type;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Slf4j
 public class ExecutorSqlHelper {
+    private static final Map<String, Class<?>> MAPPER_ENTITY_CACHE = new ConcurrentHashMap<>(256);
+    private static final Class<?> NO_ENTITY_MARKER = Void.class; // 标记无实体的Mapper，防止缓存穿透
 
-    public static String buildExecutableSql(Configuration cfg,
-                                            MappedStatement ms,
-                                            Object param) {
-
-        BoundSql boundSql = ms.getBoundSql(param);
-        String sql = normalizeSql(boundSql.getSql());
-
-        List<ParameterMapping> pms = boundSql.getParameterMappings();
-        if (pms == null || pms.isEmpty()) {
-            return sql;
-        }
-
-        MetaObject metaObject = param == null ? null : cfg.newMetaObject(param);
-        TypeHandlerRegistry registry = cfg.getTypeHandlerRegistry();
-
-        for (ParameterMapping pm : pms) {
-            if (pm.getMode() == ParameterMode.OUT) continue;
-
-            String property = pm.getProperty();
-            Object value = null;
-
-            // ✅ 1. foreach / batch / wrapper
-            if (boundSql.hasAdditionalParameter(property)) {
-                value = boundSql.getAdditionalParameter(property);
+    /**
+     * 只有在异步线程中才调用此方法进行复杂的SQL拼装
+     */
+    public static String buildExecutableSql(Configuration cfg, BoundSql boundSql, Object param) {
+        try {
+            String sql = normalizeSql(boundSql.getSql());
+            List<ParameterMapping> pms = boundSql.getParameterMappings();
+            if (pms == null || pms.isEmpty()) {
+                return sql;
             }
-            // ✅ 2. 基础类型
-            else if (param != null && registry.hasTypeHandler(param.getClass())) {
-                value = param;
-            }
-            // ✅ 3. 普通对象 / @Param
-            else if (metaObject != null && metaObject.hasGetter(property)) {
-                value = metaObject.getValue(property);
-            }
-            // ✅ 4. 嵌套属性 city.provinceId
-            else {
-                try {
-                    value = cfg.newMetaObject(param).getValue(property);
-                } catch (Exception ignore) {
+
+            MetaObject metaObject = param == null ? null : cfg.newMetaObject(param);
+            TypeHandlerRegistry registry = cfg.getTypeHandlerRegistry();
+
+            for (ParameterMapping pm : pms) {
+                if (pm.getMode() == ParameterMode.OUT) continue;
+
+                String property = pm.getProperty();
+                Object value = null;
+
+                if (boundSql.hasAdditionalParameter(property)) {
+                    value = boundSql.getAdditionalParameter(property);
+                } else if (param != null && registry.hasTypeHandler(param.getClass())) {
+                    value = param;
+                } else if (metaObject != null && metaObject.hasGetter(property)) {
+                    value = metaObject.getValue(property);
+                } else {
+                    // 尝试从 Configuration 的 MetaObject 获取（处理嵌套等复杂情况）
+                    try {
+                        if (param != null) {
+                            value = cfg.newMetaObject(param).getValue(property);
+                        }
+                    } catch (Exception ignored) {}
                 }
+                // 使用 Matcher.quoteReplacement 防止 value 中包含 $ \ 等特殊字符导致报错
+                sql = sql.replaceFirst("\\?", Matcher.quoteReplacement(formatValue(value)));
             }
-
-            sql = sql.replaceFirst("\\?", formatValue(value));
+            return sql;
+        } catch (Exception e) {
+            log.warn("SQL assembly failed", e);
+            return "SQL_ASSEMBLY_ERROR";
         }
-
-        return sql;
     }
 
     private static String normalizeSql(String sql) {
-        return sql.replaceAll("\\s+", " ").trim();
+        return sql == null ? "" : sql.replaceAll("\\s+", " ").trim();
     }
 
     private static String formatValue(Object value) {
         if (value == null) return "NULL";
         if (value instanceof Number) return value.toString();
         if (value instanceof Boolean) return ((Boolean) value) ? "1" : "0";
-        return "'" + value.toString().replace("'", "''") + "'";
+        if (value instanceof Date || value instanceof java.time.temporal.Temporal) return "'" + value.toString() + "'";
+        // ✅ 优化点2：限制参数长度，防止大字符串导致内存问题
+        String strVal = value.toString();
+        if (strVal.length() > 500) strVal = strVal.substring(0, 500) + "...(truncated)";
+        return "'" + strVal.replace("'", "''") + "'";
     }
 
-
+    /**
+     * 高性能获取实体类（带缓存）
+     */
     public static Class<?> getEntityClass(String mapperId) {
+        // 先查缓存
+        Class<?> cached = MAPPER_ENTITY_CACHE.get(mapperId);
+        if (cached != null) {
+            return cached == NO_ENTITY_MARKER ? null : cached;
+        }
+
+        // 缓存未命中，进行解析
+        Class<?> parsedClass = parseEntityClass(mapperId);
+
+        // 存入缓存
+        MAPPER_ENTITY_CACHE.put(mapperId, parsedClass == null ? NO_ENTITY_MARKER : parsedClass);
+        return parsedClass;
+    }
+
+    private static Class<?> parseEntityClass(String mapperId) {
         try {
             String namespace = mapperId.substring(0, mapperId.lastIndexOf('.'));
             Class<?> mapperClass = Class.forName(namespace);
             Type[] types = mapperClass.getGenericInterfaces();
             for (Type t : types) {
                 String typeName = t.getTypeName();
-                if (typeName.contains("<") && typeName.contains(">"))
-                    return Class.forName(typeName.substring(typeName.indexOf('<') + 1, typeName.indexOf('>')));
+                // 简单的泛型解析，生产环境建议使用 Spring 的 GenericTypeResolver 或 Guava
+                if (typeName.contains("<") && typeName.contains(">")) {
+                    String className = typeName.substring(typeName.indexOf('<') + 1, typeName.indexOf('>'));
+                    // 处理可能存在的泛型嵌套，简单取第一个
+                    if(className.contains("<")) className = className.substring(0, className.indexOf('<'));
+                    return Class.forName(className);
+                }
             }
         } catch (Exception e) {
-            log.error("无法解析实体类", e);
+            // 仅打印一次 debug，防止日志泛滥
+            log.debug("无法解析 Mapper 对应的实体类: {}", mapperId);
         }
         return null;
     }
-//    public static void setParams(MappedStatement ms, BoundSql boundSql, Object parameterObject, CapturedSqlInfo info) {
-//        if (boundSql == null) return;
-//
-//        List<ParameterMapping> pms = boundSql.getParameterMappings();
-//        if (pms == null || pms.isEmpty()) return;
-//
-//        Configuration configuration = ms.getConfiguration();
-//        MetaObject metaObject = parameterObject == null ? null : configuration.newMetaObject(parameterObject);
-//        TypeHandlerRegistry typeHandlerRegistry = configuration.getTypeHandlerRegistry();
-//
-//        LinkedHashMap<String, Object> allParams = new LinkedHashMap<>();
-//        LinkedHashMap<String, Object> whereParams = new LinkedHashMap<>();
-//
-//        int idx = 0;
-//        for (ParameterMapping pm : pms) {
-//            if (pm.getMode() == ParameterMode.OUT) continue;
-//
-//            String property = pm.getProperty();
-//            Object value = null;
-//
-//            if (boundSql.hasAdditionalParameter(property)) {
-//                value = boundSql.getAdditionalParameter(property);
-//            } else if (parameterObject == null) {
-//                value = null;
-//            } else if (typeHandlerRegistry.hasTypeHandler(parameterObject.getClass())) {
-//                value = parameterObject;
-//            } else {
-//                value = metaObject != null ? metaObject.getValue(property) : null;
-//            }
-//
-//            allParams.put(property, value);
-//
-//            // 如果是 Wrapper 或者动态 SQL 的 where 参数，key 一般是 ew.paramNameValuePairs.*
-//            if (property.startsWith("ew.paramNameValuePairs.") || property.startsWith("where")) {
-//                whereParams.put(property, value);
-//            }
-//
-//            idx++;
-//        }
-//
-//        info.setParams(allParams);
-//        info.setWhereParams(whereParams);
-//    }
-
+    /**
+     * 设置参数 Map (修复 Key 命名策略)
+     * 策略：优先使用属性名，仅在 Key 冲突时追加索引
+     */
     public static void setParams(MappedStatement ms, BoundSql boundSql, Object parameterObject, CapturedSqlInfo info) {
         if (boundSql == null) return;
-
-        List<ParameterMapping> pms = boundSql.getParameterMappings();
-        if (pms == null || pms.isEmpty()) return;
-
-        Configuration configuration = ms.getConfiguration();
-        TypeHandlerRegistry typeHandlerRegistry = configuration.getTypeHandlerRegistry();
-        MetaObject metaObject = parameterObject == null ? null : configuration.newMetaObject(parameterObject);
-
-        LinkedHashMap<String, Object> allParams = new LinkedHashMap<>();
-        LinkedHashMap<String, Object> whereParams = new LinkedHashMap<>();
-
-        // 1. 尝试获取 MP 的 TableInfo (用于将列名转回属性名)
-        // 优先从 info 中获取实体类名（假设你之前的逻辑已经填充了 entityClassName）
-        Class<?> entityClass = null;
         try {
-            if (info.getEntityClassName() != null) {
-                entityClass = Class.forName(info.getEntityClassName());
-            } else if (parameterObject != null && !typeHandlerRegistry.hasTypeHandler(parameterObject.getClass())) {
-                // 尝试从 parameterObject 获取，排除 Map 等基础类型
-                entityClass = parameterObject.getClass();
-            }
-        } catch (Exception ignored) {
-        }
+            List<ParameterMapping> pms = boundSql.getParameterMappings();
+            if (pms == null || pms.isEmpty()) return;
 
-        TableInfo tableInfo = (entityClass != null) ? TableInfoHelper.getTableInfo(entityClass) : null;
+            Configuration configuration = ms.getConfiguration();
+            TypeHandlerRegistry typeHandlerRegistry = configuration.getTypeHandlerRegistry();
+            MetaObject metaObject = parameterObject == null ? null : configuration.newMetaObject(parameterObject);
 
-        // 2. 预解析 SQL，找到每个 ? 对应的列名，以及 WHERE 子句的位置
-        String sql = boundSql.getSql();
-        // 简单的 SQL 解析：提取 ? 前面的单词作为列名
-        List<String> sqlColumns = extractColumnsFromSql(sql);
-        // 找到 WHERE 关键字的位置 (简单处理，取第一个 WHERE，对于子查询可能不准，但在日志场景够用了)
-        int whereIndex = sql.toUpperCase().indexOf("WHERE");
-        // 记录当前 ? 在 SQL 中的字符索引位置
-        List<Integer> paramIndices = extractParamIndices(sql);
+            // 使用 LinkedHashMap 保持参数顺序
+            LinkedHashMap<String, Object> allParams = new LinkedHashMap<>();
 
-        for (int i = 0; i < pms.size(); i++) {
-            ParameterMapping pm = pms.get(i);
-            if (pm.getMode() == ParameterMode.OUT) continue;
+            for (ParameterMapping pm : pms) {
+                if (pm.getMode() == ParameterMode.OUT) continue;
 
-            String propertyName = pm.getProperty();
-            Object value;
+                String property = pm.getProperty();
+                Object value;
 
-            // --- 取值逻辑 (保持不变) ---
-            if (boundSql.hasAdditionalParameter(propertyName)) {
-                value = boundSql.getAdditionalParameter(propertyName);
-            } else if (parameterObject == null) {
-                value = null;
-            } else if (typeHandlerRegistry.hasTypeHandler(parameterObject.getClass())) {
-                value = parameterObject;
-            } else {
-                value = metaObject == null ? null : metaObject.getValue(propertyName);
-            }
-
-            // --- 核心修复：确定 Key 的名称 ---
-            String finalKey = propertyName;
-
-            // 如果解析到了列名，并且能找到对应的 TableInfo，尝试转回 Java 属性名
-            if (i < sqlColumns.size()) {
-                String columnName = sqlColumns.get(i);
-                if (columnName != null && !columnName.isEmpty()) {
-                    // 1. 优先尝试用 MP 映射: column -> property
-                    if (tableInfo != null) {
-                        // MP 的 getProperty 是通过列名找属性名，注意 MP 可能会忽略大小写
-                        // 这里做一个简单的遍历查找，因为 MP API 没有直接通过 column 找 property 的公开高效方法
-                        String mappedProperty = tableInfo.getFieldList().stream()
-                                .filter(f -> f.getColumn().equalsIgnoreCase(columnName))
-                                .map(f -> f.getProperty())
-                                .findFirst()
-                                .orElse(null);
-
-                        if (mappedProperty != null) {
-                            finalKey = mappedProperty;
-                        } else if (tableInfo.getKeyColumn() != null && tableInfo.getKeyColumn().equalsIgnoreCase(columnName)) {
-                            finalKey = tableInfo.getKeyProperty();
-                        } else {
-                            // 没映射上，就用列名 (比 MPGENVAL 好看)
-                            finalKey = columnName;
-                        }
-                    } else {
-                        // 没有实体信息，直接用 SQL 里的列名 (比 MPGENVAL 好看)
-                        finalKey = columnName;
-                    }
+                // 1. 取值逻辑 (保持不变)
+                if (boundSql.hasAdditionalParameter(property)) {
+                    value = boundSql.getAdditionalParameter(property);
+                } else if (parameterObject == null) {
+                    value = null;
+                } else if (typeHandlerRegistry.hasTypeHandler(parameterObject.getClass())) {
+                    value = parameterObject;
+                } else {
+                    value = metaObject != null ? metaObject.getValue(property) : null;
                 }
-            }
 
-            // 加上索引前缀，防止同名参数覆盖 (如 update set name=? where name=?)
-            String mapKey = i + "_" + finalKey;
-
-            allParams.put(mapKey, value);
-
-            // --- 核心修复：确定是否为 Where 参数 ---
-            // 逻辑：如果当前 ? 的位置在 WHERE 关键字之后，则认为是条件参数
-            if (whereIndex > -1 && i < paramIndices.size()) {
-                if (paramIndices.get(i) > whereIndex) {
-                    whereParams.put(mapKey, value);
+                // 2. 值处理：大对象截断
+                if (value != null && value.toString().length() > 512) {
+                    value = "[Long Content Truncated...]";
                 }
-            }
-        }
 
-        info.setParams(allParams);
-        info.setWhereParams(whereParams);
+                // 3. ✅ 修复 Key 的生成逻辑
+                // 移除 "index_" 前缀。如果 map 中已存在该 key (同名参数)，则追加 "_index" 防止覆盖
+                String key = property;
+                if (allParams.containsKey(key)) {
+                    // 出现重复参数名 (例如 set name=? where name=?)，追加索引区分
+                    // 格式变更为: name_2, name_5
+                    key = property + "_" + pms.indexOf(pm);
+                }
+
+                // 针对 MyBatis Plus 的 ew.paramNameValuePairs.xxx 进行美化 (可选)
+                if (key.startsWith("ew.paramNameValuePairs.")) {
+                    key = key.substring("ew.paramNameValuePairs.".length());
+                }
+
+                allParams.put(key, value);
+            }
+            info.setParams(allParams);
+        } catch (Exception e) {
+            log.warn("Monitor: extract params failed", e);
+        }
     }
+
 
     /**
      * 辅助方法：提取 SQL 中每个 ? 前面的列名
