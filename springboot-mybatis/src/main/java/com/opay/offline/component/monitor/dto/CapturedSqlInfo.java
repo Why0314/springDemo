@@ -1,47 +1,61 @@
 package com.opay.offline.component.monitor.dto;
 
 import lombok.Data;
-import org.apache.ibatis.mapping.BoundSql;
-import org.apache.ibatis.mapping.MappedStatement;
 import org.apache.ibatis.mapping.SqlCommandType;
-import org.apache.ibatis.session.Configuration;
 
+import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.Map;
 
+/**
+ * 纯净的消息载体，用于在 Handler 链中传递
+ */
 @Data
-public class CapturedSqlInfo {
-    // 实体类名
+public class CapturedSqlInfo implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    // --- 基础元数据 ---
     private String entityClassName;
-    // 数据库表名
-    private String tableName;
-    // Mapper 方法
     private String mapperMethod;
-    // 原始 SQL
-    private String rawSql;
     private SqlCommandType sqlCommandType;
-    // 全部参数
-    private LinkedHashMap<String, Object> params;
-    // where后面的条件参数
-    private LinkedHashMap<String, Object> whereParams;
-    // 可执行 SQL
-    private String executableSql;
-    // 执行结果
-    private Object result;
-    // 执行结果摘要
-    private String resultSummary;
-    // SQL 是否成功
-    private boolean success;
     private LocalDateTime timestamp = LocalDateTime.now();
-    // SQL 执行耗时
+
+    // --- SQL 数据 ---
+    private String rawSql;          // 原始 SQL (带 ?)
+    private String executableSql;   // 可执行 SQL (参数已填充)
+
+    // --- 参数详情 ---
+    // 有序 Map，存储所有解析到的参数
+    private LinkedHashMap<String, Object> params;
+    // 有序 Map，专存 WHERE 条件参数 (用于审计)
+    private LinkedHashMap<String, Object> whereParams;
+
+    // --- 执行结果 ---
+    private boolean success;
     private long durationMillis;
+    //执行结果，如过结果集数量超过阈值，则只取第一条
+    private Object result;
+    // 结果摘要 (如 "over_5" 或 执行结果)
+    private String ResultSummary;
 
+    // --- ✅ 新增：扩展槽 (Context) ---
+    // 用于多个 Handler 之间传递中间结果 (例如：敏感词命中标记、风险评分等)
+    private Map<String, Object> ext = new HashMap<>();
 
+    /**
+     * 链式调用辅助方法：设置扩展属性
+     */
+    public void addExt(String key, Object value) {
+        this.ext.put(key, value);
+    }
 
-    // 异步处理时需要的上下文，处理完后置空以释放内存
-    private transient Configuration configuration;
-    private transient MappedStatement mappedStatement;
-    private transient Object parameterObject;
-    private transient BoundSql boundSql;
-
+    /**
+     * 链式调用辅助方法：获取扩展属性
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T getExt(String key) {
+        return (T) this.ext.get(key);
+    }
 }

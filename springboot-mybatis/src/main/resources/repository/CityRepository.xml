@@ -38,7 +38,7 @@
         </foreach>
     </insert>
 
-    <update id="updateById" parameterType="com.opay.org.spring.springboot.entity.City">
+    <update id="updateDataById" parameterType="com.opay.org.spring.springboot.entity.City">
         update city
         set province_id = #{city.provinceId},
             city_name   = #{city.cityName},

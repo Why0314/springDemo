@@ -44,7 +44,7 @@ public class CityServiceImpl extends ServiceImpl<CityRepository, City> implement
 
     @Override
     public int updateOneById(City city) {
-        return cityRepository.updateById(city);
+        return cityRepository.updateDataById(city);
     }
 
     @Override
