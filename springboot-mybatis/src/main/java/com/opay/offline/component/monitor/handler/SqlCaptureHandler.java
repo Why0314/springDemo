@@ -1,9 +1,9 @@
 package com.opay.offline.component.monitor.handler;
 
 
-import com.opay.offline.component.monitor.dto.CapturedSqlInfo;
+import com.opay.offline.component.monitor.model.CapturedSqlInfo;
 
-public abstract interface SqlCaptureHandler {
+public  interface SqlCaptureHandler {
 
     void onCapture(CapturedSqlInfo info);
 }

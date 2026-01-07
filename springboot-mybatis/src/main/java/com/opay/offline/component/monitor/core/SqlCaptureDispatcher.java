@@ -1,96 +1,93 @@
-package com.opay.offline.component.monitor.async;
+package com.opay.offline.component.monitor.core;
 
-import com.opay.offline.component.monitor.dto.CapturedSqlInfo;
-import com.opay.offline.component.monitor.dto.SqlCaptureContext;
+import com.opay.offline.component.monitor.config.SqlCaptureProperties;
+import com.opay.offline.component.monitor.model.CapturedSqlInfo;
+import com.opay.offline.component.monitor.model.SqlCaptureContext;
 import com.opay.offline.component.monitor.handler.SqlCaptureHandler;
-import com.opay.offline.component.monitor.util.DruidSqlParserHelper;
-import com.opay.offline.component.monitor.util.ExecutorSqlHelper;
+import com.opay.offline.component.monitor.support.SqlBuilderUtils;
+import com.opay.org.spring.springboot.bak.DruidSqlParserHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class SqlCaptureCollector {
+public class SqlCaptureDispatcher {
 
     private final List<SqlCaptureHandler> handlers;
-    private final SqlCaptureThreadPool threadPool;
+    private final MonitorExecutorService threadPool;
+    private final SqlCaptureProperties properties;
 
-    // ✅ 入参改为 Context
     public void submit(SqlCaptureContext context) {
         threadPool.execute(() -> {
             try {
-                // 1. 【重活】利用 Context 中的 MyBatis 对象，进行 SQL 解析和组装
+                // 1. 利用 Context 构建可执行 SQL
                 processContext(context);
 
-                // 2. 【脱壳】从 Context 中取出纯净的 DTO
+                // 2. 获取纯净 DTO
                 CapturedSqlInfo info = context.getInfo();
 
-                // 3. 【分发】链式/顺序调用 Handlers
+                // 3. 分发给所有 Handler
                 for (SqlCaptureHandler handler : handlers) {
                     try {
                         handler.onCapture(info);
                     } catch (Exception e) {
-                        log.error("Handler [{}] execution failed", handler.getClass().getSimpleName(), e);
-                        // 商业级：通常不中断链条，继续下一个，或者根据需求 break
+                        log.error("Handler [{}] failed", handler.getClass().getSimpleName(), e);
                     }
                 }
             } catch (Exception e) {
-                log.error("Async capture processing failed", e);
+                log.error("Async capture failed", e);
             }
-            // 方法结束，Context 局部变量出栈，MyBatis 重对象引用断开，等待 GC
+            // Context 在此作用域结束，帮助 GC 回收 MyBatis 重对象
         });
     }
 
-    /**
-     * 解析逻辑：使用 Context 填充 Info 的字段
-     */
     private void processContext(SqlCaptureContext ctx) {
         CapturedSqlInfo info = ctx.getInfo();
 
-        // 1. 构建 ExecutableSql (需要 Configuration 等)
         if (ctx.getBoundSql() != null && ctx.getConfiguration() != null) {
-            String executableSql = ExecutorSqlHelper.buildExecutableSql(
+            // 组装 SQL
+            String executableSql = SqlBuilderUtils.buildExecutableSql(
                     ctx.getConfiguration(),
                     ctx.getBoundSql(),
                     ctx.getParameterObject()
             );
+
+            // 安全检查：超长 SQL 截断
+            if (executableSql != null && executableSql.length() > properties.getMaxSqlLength()) {
+                info.setExecutableSql(executableSql.substring(0, properties.getMaxSqlLength()) + " ...[TRUNCATED]");
+                // 超长 SQL 放弃解析参数，防止 Druid 卡死
+                return;
+            }
             info.setExecutableSql(executableSql);
         }
+
+        // 核心：基于 Druid AST 解析参数 (区分 SET 和 WHERE)
         reparseParams(info);
     }
 
-    /**
-     * 重新解析参数，填充 params 和 whereParams
-     */
     private void reparseParams(CapturedSqlInfo info) {
-        // 优先使用已填充了参数值的可执行 SQL
         String sql = info.getExecutableSql();
-        // 降级：如果没有可执行 SQL，使用原始 SQL (虽然带 ? 但能分析结构)
         if (sql == null || sql.trim().isEmpty()) {
             sql = info.getRawSql();
         }
 
         if (sql != null && !sql.trim().isEmpty()) {
             try {
-                // 调用 Druid 工具类进行 AST 分析
+                // 使用 ExecutorSqlHelper 中的 Druid 逻辑
                 DruidSqlParserHelper.SqlParamAnalysis analysis = DruidSqlParserHelper.analyzeSqlParams(sql);
 
-                // 填充全量参数 (SET + WHERE)
-                // 例如 UPDATE: {province_id=1, id=1}
+                // 设置全量参数 (SET + WHERE)
                 info.setParams(new LinkedHashMap<>(analysis.getAllParams()));
 
-                // 填充条件参数 (仅 WHERE)
-                // 例如 UPDATE: {id=1}
+                // 设置条件参数 (仅 WHERE)
                 info.setWhereParams(new LinkedHashMap<>(analysis.getWhereParams()));
-
             } catch (Exception e) {
-                log.warn("SQL re-parsing failed for SQL: {}", sql, e);
+                log.warn("Param parsing failed for SQL", e);
             }
         }
     }

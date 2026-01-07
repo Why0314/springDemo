@@ -1,10 +1,10 @@
 package com.opay.offline.component.monitor.interceptor;
 
-import com.opay.offline.component.monitor.async.SqlCaptureCollector;
-import com.opay.offline.component.monitor.dto.CapturedSqlInfo;
-import com.opay.offline.component.monitor.dto.SqlCaptureContext;
-import com.opay.offline.component.monitor.util.ExecutorSqlHelper;
-import com.opay.offline.component.monitor.annotation.EnableMybatisInterceptorEntity;
+import com.opay.offline.component.monitor.annotation.MonitorSql;
+import com.opay.offline.component.monitor.core.SqlCaptureDispatcher;
+import com.opay.offline.component.monitor.model.CapturedSqlInfo;
+import com.opay.offline.component.monitor.model.SqlCaptureContext;
+import com.opay.offline.component.monitor.support.SqlBuilderUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.ibatis.executor.Executor;
 import org.apache.ibatis.mapping.MappedStatement;
@@ -18,107 +18,94 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.Properties;
 
+@Slf4j
 @Component
 @Intercepts({
         @Signature(type = Executor.class, method = "update", args = {MappedStatement.class, Object.class}),
         @Signature(type = Executor.class, method = "query", args = {MappedStatement.class, Object.class, RowBounds.class, ResultHandler.class})
 })
-@Slf4j
-public class MybatisEntityInterceptor implements Interceptor {
+public class SqlCaptureInterceptor implements Interceptor {
 
+    // ✅ 核心：使用 @Lazy 打破循环依赖 (Interceptor -> Collector -> Handler -> Enricher -> SqlSessionFactory -> Interceptor)
     @Autowired
     @Lazy
-    private SqlCaptureCollector sqlCaptureCollector;
+    private SqlCaptureDispatcher sqlCaptureDispatcher;
 
     @Override
     public Object intercept(Invocation invocation) throws Throwable {
-        // ... (前置获取 entityClass, info 初始化等逻辑保持不变) ...
-        // 参考之前的优化代码 ...
-
         Object[] args = invocation.getArgs();
         MappedStatement ms = (MappedStatement) args[0];
-        Class<?> entityClass = ExecutorSqlHelper.getEntityClass(ms.getId());
-        if (entityClass == null || !entityClass.isAnnotationPresent(EnableMybatisInterceptorEntity.class)) {
+
+        // 1. 快速判断是否需要拦截 (基于缓存)
+        Class<?> entityClass = SqlBuilderUtils.getEntityClass(ms.getId());
+        if (entityClass == null || !entityClass.isAnnotationPresent(MonitorSql.class)) {
             return invocation.proceed();
         }
 
-        // 1. 初始化 DTO
+        // 2. 准备上下文
         CapturedSqlInfo info = new CapturedSqlInfo();
         info.setEntityClassName(entityClass.getSimpleName());
         info.setMapperMethod(ms.getId());
         info.setSqlCommandType(ms.getSqlCommandType());
 
-        // 2. ✅ 初始化上下文 (Context)，装载 MyBatis 对象
+        // 使用 Context 包装 MyBatis 重对象，避免在 DTO 中长期持有
         SqlCaptureContext context = new SqlCaptureContext(info);
         context.setConfiguration(ms.getConfiguration());
         context.setMappedStatement(ms);
         context.setParameterObject(args.length > 1 ? args[1] : null);
+
         try {
+            // 尝试获取 BoundSql (轻微计算)
             context.setBoundSql(ms.getBoundSql(context.getParameterObject()));
             info.setRawSql(context.getBoundSql().getSql());
         } catch (Exception ignored) {
+            // 忽略异常，保证主流程不中断
         }
-
 
         boolean success = true;
         Object result = null;
         long start = System.currentTimeMillis();
 
         try {
-            // 1. 执行 SQL
+            // 3. 执行原业务逻辑
             result = invocation.proceed();
 
-            // 2. ✅【核心修改】处理结果策略
+            // 4. 处理结果 (截断大列表)
             handleResultPolicy(info, result);
 
             return result;
         } catch (Throwable t) {
             success = false;
-            // 异常时记录错误信息
             info.setResult("Exception: " + t.getMessage());
             throw t;
         } finally {
             info.setDurationMillis(System.currentTimeMillis() - start);
             info.setSuccess(success);
-            // 提交异步
-            sqlCaptureCollector.submit(context);
+
+            // 5. 异步提交
+            sqlCaptureDispatcher.submit(context);
         }
     }
 
-    /**
-     * 结果处理策略：
-     * 1. 如果是查询结果(List)，<=10条记录，>10条记录null
-     * 2. 如果是更新/插入结果(Integer/Boolean)，直接记录
-     */
     private void handleResultPolicy(CapturedSqlInfo info, Object result) {
         if (result == null) {
             info.setResult(null);
             return;
         }
-
-        // 判断是否为集合 (MyBatis Executor.query 永远返回 List)
         if (result instanceof Collection) {
-            Collection<?> collection = (Collection<?>) result;
-            int size = collection.size();
-
-            // ✅ 策略：超过 10 条，不记录 result (设为 null 或提示语)
+            Collection<?> col = (Collection<?>) result;
+            int size = col.size();
+            // 策略：超过 10 条不记录详细内容，防止内存溢出
             if (size > 10) {
-                // 方式 A: 严格遵照你的要求，设为 null
-//                info.setResult(null);
-                // 方式 B (建议): 存一个简单的字符串提示，区分"查不到"和"太多了"
-                info.setResult(collection.stream().findFirst().orElse(null));
-                // 同时也记录一下摘要，方便知道到底查了多少条
-                info.setResultSummary("over_" + size);
+                // 只记录第一条作为参考，或者干脆 null
+                Object first = col.isEmpty() ? null : col.iterator().next();
+                info.setResult(first != null ? "First: " + first + " ... (Total: " + size + ")" : "Size: " + size);
+                info.setResultSummary("List Size: " + size + " (Truncated)");
             } else {
-                // ✅ 策略：<= 10 条，记录完整结果
-                // 注意：这里是引用传递。如果后续代码修改了 List 内容，异步线程也会看到修改后的。
-                // 通常 Service 层拿到 List 很少修改内容，所以直接传引用在性能上是最高效的。
                 info.setResult(result);
-                info.setResultSummary(String.valueOf(size));
+                info.setResultSummary("List Size: " + size);
             }
-        }
-        // 处理 Update/Insert/Delete 返回的 Integer/Long/Boolean
-        else {
+        } else {
             info.setResult(result);
             info.setResultSummary(String.valueOf(result));
         }
@@ -130,6 +117,5 @@ public class MybatisEntityInterceptor implements Interceptor {
     }
 
     @Override
-    public void setProperties(Properties properties) {
-    }
+    public void setProperties(Properties properties) {}
 }

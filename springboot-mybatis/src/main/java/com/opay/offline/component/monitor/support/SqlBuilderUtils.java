@@ -1,4 +1,4 @@
-package com.opay.offline.component.monitor.util;
+package com.opay.offline.component.monitor.support;
 
 
 import com.alibaba.druid.sql.SQLUtils;
@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 
 @Slf4j
-public class ExecutorSqlHelper {
+public class SqlBuilderUtils {
     private static final Map<String, Class<?>> MAPPER_ENTITY_CACHE = new ConcurrentHashMap<>(256);
     private static final Class<?> NO_ENTITY_MARKER = Void.class; // 标记无实体的Mapper，防止缓存穿透
 

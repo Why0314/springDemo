@@ -1,4 +1,4 @@
-package com.opay.offline.component.monitor.dto;
+package com.opay.offline.component.monitor.model;
 
 import lombok.Data;
 import org.apache.ibatis.mapping.BoundSql;

@@ -7,7 +7,7 @@ import java.lang.annotation.*;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface EnableMybatisInterceptorEntity {
+public @interface MonitorSql {
     /**
      * 拦截的操作类型
      *
