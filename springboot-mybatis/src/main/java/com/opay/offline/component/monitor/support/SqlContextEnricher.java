@@ -26,19 +26,22 @@ public class SqlContextEnricher {
      * 智能获取字段值 (优先内存，缺失查库)
      * 返回 Map，不修改 info 对象，无副作用
      */
-    public Map<String, Object> enrich(CapturedSqlInfo info, String targetColumnsStr) {
+    public Map<String, Object> enrich(CapturedSqlInfo info, String targetColumns) {
         Map<String, Object> resultMap = new HashMap<>();
-        if (targetColumnsStr == null || info.getParams() == null) {
+        if (targetColumns == null || info.getParams() == null) {
             return resultMap;
         }
 
-        String[] targets = targetColumnsStr.split(",");
+        String[] targets = targetColumns.split(",");
         List<String> missingColumns = new ArrayList<>();
         Map<String, Object> currentParams = info.getParams();
 
         // 1. 内存查找
         for (String target : targets) {
             String colName = target.trim();
+            if (colName.isEmpty()) {
+                continue;
+            }
             Object val = currentParams.get(colName);
             // 容错: 尝试 CamelCase
             if (val == null) {
@@ -86,10 +89,15 @@ public class SqlContextEnricher {
                 if (rs.next()) {
                     for (String col : columnsToQuery.split(",")) {
                         String cleanCol = col.trim();
+                        if (cleanCol.isEmpty()) {
+                            continue;
+                        }
                         try {
                             Object val = rs.getObject(cleanCol);
                             if (val != null) dbResult.put(cleanCol, val);
-                        } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            log.debug("Failed to get value for column: {}", cleanCol, e);
+                        }
                     }
                 }
             }

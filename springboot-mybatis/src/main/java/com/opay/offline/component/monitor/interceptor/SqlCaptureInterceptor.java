@@ -58,8 +58,8 @@ public class SqlCaptureInterceptor implements Interceptor {
             // 尝试获取 BoundSql (轻微计算)
             context.setBoundSql(ms.getBoundSql(context.getParameterObject()));
             info.setRawSql(context.getBoundSql().getSql());
-        } catch (Exception ignored) {
-            // 忽略异常，保证主流程不中断
+        } catch (Exception e) {
+            log.debug("Failed to get BoundSql", e);
         }
 
         boolean success = true;

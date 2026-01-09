@@ -5,7 +5,7 @@ import com.opay.offline.component.monitor.model.CapturedSqlInfo;
 import com.opay.offline.component.monitor.model.SqlCaptureContext;
 import com.opay.offline.component.monitor.handler.SqlCaptureHandler;
 import com.opay.offline.component.monitor.support.SqlBuilderUtils;
-import com.opay.org.spring.springboot.bak.DruidSqlParserHelper;
+import com.opay.offline.component.monitor.support.DruidSqlParserHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

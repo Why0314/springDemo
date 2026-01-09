@@ -36,17 +36,17 @@ public class BeanColumnUtil {
         return SNAKE_TO_CAMEL_CACHE.computeIfAbsent(snakeCaseStr, k -> {
             StringBuilder sb = new StringBuilder();
             boolean nextUpperCase = false;
-
             for (int i = 0; i < k.length(); i++) {
                 char c = k.charAt(i);
                 if (c == '_') {
-                    nextUpperCase = true;
+                    if (sb.length() > 0) {
+                        nextUpperCase = true;
+                    }
                 } else {
                     if (nextUpperCase) {
                         sb.append(Character.toUpperCase(c));
                         nextUpperCase = false;
                     } else {
-                        // 默认转小写，防止数据库字段全是 USER_NAME 这种情况
                         sb.append(Character.toLowerCase(c));
                     }
                 }
@@ -71,8 +71,7 @@ public class BeanColumnUtil {
             for (int i = 0; i < k.length(); i++) {
                 char c = k.charAt(i);
                 if (Character.isUpperCase(c)) {
-                    // 遇到大写，前面加下划线，并将该字符转小写
-                    if (i > 0) {
+                    if (i > 0 && (Character.isLowerCase(k.charAt(i - 1)) || (i < k.length() - 1 && Character.isLowerCase(k.charAt(i + 1))))) {
                         sb.append('_');
                     }
                     sb.append(Character.toLowerCase(c));

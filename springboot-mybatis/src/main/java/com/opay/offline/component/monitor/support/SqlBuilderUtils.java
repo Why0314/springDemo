@@ -61,7 +61,8 @@ public class SqlBuilderUtils {
                         if (param != null) {
                             value = cfg.newMetaObject(param).getValue(property);
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception e) {
+                        log.debug("Failed to get value for property: {}", property, e);
                     }
                 }
                 // 使用 Matcher.quoteReplacement 防止 value 中包含 $ \ 等特殊字符导致报错
